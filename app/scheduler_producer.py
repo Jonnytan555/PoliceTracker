@@ -6,6 +6,10 @@ from .db import get_engine, ensure_schema
 from .etl import discover_months_for_forces, load_dim_force
 from .mq import MQClient
 
+from .logging_setup import setup_logging
+setup_logging()
+
+
 MQ_HOST = os.getenv("MQ_HOST", "activemq")
 MQ_PORT = int(os.getenv("MQ_PORT", "61613"))
 MQ_USER = os.getenv("MQ_USER", "admin")

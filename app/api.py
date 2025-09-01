@@ -1,50 +1,58 @@
-from fastapi import FastAPI, Query, HTTPException, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from typing import List
-from datetime import date
+import os
+from fastapi import Depends, FastAPI, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from starlette.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest, Counter
+
+from .logging_setup import setup_logging
 from .db import get_engine
-from .utils import last_month_yyyymm
 from .config import settings
 
-app = FastAPI(title="Stop & Search API", version="1.0")
-templates = Jinja2Templates(directory="app/templates")
+setup_logging()
+
+API_KEY = os.getenv("API_KEY")  # set in .env for prod
+ALLOWED_ORIGINS = os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")
+
+app = FastAPI(title="Stop & Search API", version="1.1")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS != ["*"] else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+REGISTRY = CollectorRegistry()
+API_REQS = Counter("api_requests_total", "API requests", ["endpoint"], registry=REGISTRY)
+
+@app.middleware("http")
+async def metrics_middleware(request, call_next):
+    resp = await call_next(request)
+    API_REQS.labels(endpoint=request.url.path).inc()
+    return resp
+
+def require_api_key(x_api_key: str = Header(default=None)):
+    if API_KEY and x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return True
+
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
+
+@app.get("/")
+def root():
+    return {"name": "Stop & Search API", "docs": "/docs", "health": "/health"}
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"ok": True}
 
-@app.get("/scala", response_class=HTMLResponse)
-def scala_client_page(request: Request):
-    return templates.TemplateResponse("scala.html", {"request": request})
-
-@app.get("/outcomes/last-month")
-def outcomes_last_month(force: str = Query(..., description="Force ID, e.g., 'metropolitan'")):
-    ym = last_month_yyyymm(date.today())
-    month_date = f"{ym}-01"
-    sql = text("""
-        SELECT outcome, [count]
-        FROM dbo.gold_monthly_outcomes
-        WHERE force_id = :force AND [month] = :month
-        ORDER BY [count] DESC, outcome
-    """)
+@app.get("/forces", dependencies=[Depends(require_api_key)])
+def list_forces():
+    sql = text("SELECT id, name FROM dbo.dim_force ORDER BY name;")
     with get_engine(settings.database_url).connect() as conn:
-        rows = conn.execute(sql, {"force": force, "month": month_date}).mappings().all()
-    return {"force": force, "month": ym, "outcomes": rows}
-
-@app.get("/stats/last-month")
-def stats_last_month(force: str = Query(...)):
-    ym = last_month_yyyymm(date.today())
-    month_date = f"{ym}-01"
-    sql = text("""
-        SELECT COUNT(*) AS total, 
-               SUM(CASE WHEN outcome IS NULL OR outcome = '' THEN 0 ELSE 1 END) AS with_outcome
-        FROM dbo.fact_stop_search
-        WHERE force_id = :force AND [month] = :month
-    """)
-    with get_engine(settings.database_url).connect() as conn:
-        row = conn.execute(sql, {"force": force, "month": month_date}).mappings().first()
-    if not row:
-        raise HTTPException(404, "No data")
-    return {"force": force, "month": ym, **row}
+        rows = conn.execute(sql).mappings().all()
+    return {"forces": rows}

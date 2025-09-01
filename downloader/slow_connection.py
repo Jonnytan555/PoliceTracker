@@ -1,0 +1,2 @@
+class SlowConnectionError(Exception):
+    pass

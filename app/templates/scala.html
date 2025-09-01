@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <title>Scala client for Stop & Search API</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; line-height: 1.5; }
+      pre { background: #0b1021; color: #d6deeb; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    </style>
+  </head>
+  <body>
+    <h1>Scala client example</h1>
+    <p>This snippet calls the <code>/outcomes/last-month</code> endpoint for a given force (e.g. <code>metropolitan</code>).</p>
+
+<pre><code class="scala">
+// build.sbt dependencies:
+// libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.9.6"
+// libraryDependencies += "io.circe" %% "circe-core" % "0.14.10"
+// libraryDependencies += "io.circe" %% "circe-generic" % "0.14.10"
+// libraryDependencies += "io.circe" %% "circe-parser" % "0.14.10"
+
+import sttp.client3._
+import io.circe._, io.circe.parser._
+
+case class OutcomeRow(outcome: String, count: Int)
+case class ApiResponse(force: String, month: String, outcomes: List[Map[String, Json]])
+
+object Client extends App {
+  val apiBase = sys.env.getOrElse("API_BASE", "http://localhost:8000")
+  val force   = sys.env.getOrElse("FORCE", "metropolitan")
+
+  val backend = HttpURLConnectionBackend()
+  val url     = uri"$apiBase/outcomes/last-month?force=$force"
+
+  val req  = basicRequest.get(url)
+  val resp = req.send(backend)
+
+  resp.body match {
+    case Left(err) =>
+      println(s"HTTP error: $err")
+    case Right(body) =>
+      println(s"Raw JSON: $body")
+      val json = parse(body).getOrElse(Json.Null)
+      val outcomes = json.hcursor.downField("outcomes").as[List[Map[String, Json]]].getOrElse(Nil)
+      val rows = outcomes.flatMap { m =>
+        for {
+          out <- m.get("outcome").flatMap(_.asString)
+          cnt <- m.get("count").flatMap(_.asNumber).flatMap(_.toInt)
+        } yield OutcomeRow(out, cnt)
+      }
+      println("Outcomes (last month):")
+      rows.foreach(r => println(f" - ${r.outcome}%-30s ${r.count}%7d"))
+  }
+}
+</code></pre>
+
+    <p>Run it with:</p>
+<pre><code class="bash">API_BASE=http://localhost:8000 FORCE=metropolitan sbt run</code></pre>
+  </body>
+</html>

@@ -1,0 +1,82 @@
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: police_mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "Your_password123"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost,1433", "-U", "sa", "-P", "Your_password123", "-C", "-Q", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  activemq:
+    image: apache/activemq-artemis:latest
+    container_name: police_activemq
+    environment:
+      ARTEMIS_USER: admin
+      ARTEMIS_PASSWORD: admin
+      ANONYMOUS_LOGIN: "false"
+    ports:
+      - "61613:61613"
+      - "8161:8161"
+    # no healthcheck, just starts
+
+  producer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: police_producer
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      activemq:
+        condition: service_started
+    command: ["python", "-m", "app.scheduler_producer"]
+    volumes:
+      - .:/app
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: police_worker
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      activemq:
+        condition: service_started
+    command: ["python", "-m", "app.etl_worker"]
+    volumes:
+      - .:/app
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: police_api
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+
+  mailhog:
+    image: mailhog/mailhog
+    container_name: police_mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"

@@ -1,48 +1,91 @@
 import json
 import logging
 import os
-from typing import List
-from downloader.file_download import FileDownload
-from downloader.subject import Observer
-import stomp
-from jinja2 import Environment, FileSystemLoader
-from notifications import email as email_mod
+from typing import Optional
+
+import stomp    # make sure stomp.py is in requirements
+
+from .email import send_email
+from .job_events import JobEvent, Observer # your SMTP helper
 
 class ActiveMQReporter(Observer):
     def __init__(self, host: str, port: int, username: str, password: str, destination: str) -> None:
-        self.host = host; self.port = port; self.username = username; self.password = password; self.destination = destination
-    def update(self, downloaded_files: List[FileDownload], files_to_download: List[FileDownload], message: str = ''):
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.destination = destination
+
+    def update(self, event: JobEvent) -> None:
+        payload = {
+            "force": event.force,
+            "month": event.month,
+            "rows": event.rows,
+            "inserted": event.inserted,
+            "status": event.status,
+            "message": event.message,
+        }
+        logging.info("[ActiveMQReporter] publish -> %s : %s", self.destination, payload)
+        conn = stomp.StompConnection12([(self.host, self.port)], keepalive=True)
         try:
-            logging.info('Publishing message to ActiveMQ...')
-            conn = stomp.Connection12([(self.host, self.port)])
             conn.connect(self.username, self.password, wait=True)
-            payload = {
-                "downloaded": [f.local_file for f in downloaded_files],
-                "total": len(files_to_download),
-                "message": message or "complete",
-            }
             conn.send(self.destination, json.dumps(payload))
-            logging.info('Message published.')
-            conn.disconnect()
-        except Exception as e:
-            raise Exception(f'{repr(e)}: Unable publish message to ActiveMQ {self.host}:{self.port}')
+        finally:
+            try:
+                conn.disconnect()
+            except Exception:
+                pass
 
 class EmailReporter(Observer):
-    def __init__(self, recipients: str, cc='', sender: str = 'noreply@freepoint.com', subject: str = 'Downloader Notification') -> None:
-        self.recipients = recipients; self.cc = cc; self.sender = sender; self.subject = subject
-    def update(self, downloaded_files: List[FileDownload], files_to_download: List[FileDownload], message: str = ''):
-        if len(files_to_download) == 0:
-            logging.info("No files to be downloaded, email not sent"); return
-        body = self.get_email_template(downloaded_files, files_to_download, message)
-        email_mod.send_email(senders=self.sender, receivers=self.recipients, cc=self.cc, subject=self.subject, body=body)
-        logging.info(f'Email sent to: {self.recipients}, cc: {self.cc}')
-    def get_email_template(self, downloaded_files: List[FileDownload], files_to_download: List[FileDownload], message: str = ''):
-        env = Environment(loader=FileSystemLoader(os.path.dirname(__file__)))
-        template = env.get_template('email_template.html')
-        return template.render(downloaded_files=downloaded_files, files_to_download=files_to_download, message=message)
+    """
+    Uses MailHog in dev by default (SMTP host/port via env).
+    Env:
+      DL_EMAIL_TO        - required to enable
+      DL_EMAIL_FROM      - optional, default "noreply@policetracker.local"
+      SMTP_HOST          - default "mailhog"
+      SMTP_PORT          - default 1025
+    """
+    def __init__(self,
+                 to: str,
+                 sender: Optional[str] = None,
+                 host: Optional[str] = None,
+                 port: Optional[int] = None) -> None:
+        self.to = to
+        self.sender = sender or os.getenv("DL_EMAIL_FROM", "noreply@policetracker.local")
+        self.host = host or os.getenv("SMTP_HOST", "mailhog")
+        self.port = int(port or int(os.getenv("SMTP_PORT", "1025")))
+
+    def update(self, event: JobEvent) -> None:
+        subj = f"[PoliceTracker] {event.status.upper()} {event.force} {event.month} ({event.rows} rows, inserted {event.inserted})"
+        if event.status != "ok" and event.message:
+            subj = f"[PoliceTracker] ERROR {event.force} {event.month}"
+
+        body = f"""
+        <h3>Ingestion {event.status}</h3>
+        <p>
+          <b>Force:</b> {event.force}<br/>
+          <b>Month:</b> {event.month}<br/>
+          <b>Rows:</b> {event.rows}<br/>
+          <b>Inserted:</b> {event.inserted}<br/>
+          <b>Status:</b> {event.status}
+        </p>
+        """
+        if event.message:
+            body += f"<pre>{event.message}</pre>"
+
+        logging.info("[EmailReporter] sending to %s", self.to)
+        send_email(
+            sender=self.sender,
+            receivers=self.to,
+            subject=subj,
+            body=body,
+            host=self.host,
+            port=self.port,
+        )
 
 class LogReporter(Observer):
-    def update(self, downloaded_files: List[FileDownload], files_to_download: List[FileDownload], message: str = ''):
-        report = f'Download progress: {len(downloaded_files)} of {len(files_to_download)}'
-        if message: report = f'{report}. Message: {message}'
-        logging.info(report)
+    def update(self, event: JobEvent) -> None:
+        logging.info(
+            "[LogReporter] %s %s rows=%s inserted=%s status=%s msg=%s",
+            event.force, event.month, event.rows, event.inserted, event.status, event.message
+        )

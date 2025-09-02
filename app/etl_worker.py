@@ -1,4 +1,3 @@
-# app/etl_worker.py
 from __future__ import annotations
 
 import os
@@ -11,14 +10,14 @@ from .etl import upsert_bronze_and_silver
 from .mq import MQClient
 
 from .job_events import Subject, JobEvent
-from .observers import ActiveMQReporter, EmailReporter, LogReporter  # add SlackReporter if you wired it
+from .observers import ActiveMQReporter, EmailReporter, LogReporter
 
 # ----- Logging -----
 try:
-    from .logging_setup import setup_logging  # if you defined this name
+    from .logging_setup import setup_logging
 except ImportError:
-    from .logging_setup import setup_log as setup_logging  # fallback to your custom name
-setup_logging()  # initialize early
+    from .logging_setup import setup_log as setup_logging
+setup_logging()
 
 # ----- Prometheus metrics -----
 from .metrics import (
@@ -48,7 +47,7 @@ API_BACKOFF_CAP  = float(os.getenv("API_BACKOFF_CAP", "8.0"))
 
 RATE_LIMITER = RateLimiter(API_RPS, burst=API_BURST)
 
-# ---- Observer setup (attach what you need) ----
+# ---- Observer setup -----
 SUBJECT = Subject()
 SUBJECT.attach(LogReporter())  # always log
 _dl_to = os.getenv("DL_EMAIL_TO", "").strip()
@@ -58,7 +57,6 @@ if os.getenv("ENABLE_AMQ_REPORTER", "1").lower() in ("1", "true", "yes"):
     SUBJECT.attach(ActiveMQReporter(
         host=MQ_HOST, port=MQ_PORT, username=MQ_USER, password=MQ_PASSWORD, destination=MQ_QUEUE_NOTIFY
     ))
-# If you added SlackReporter, attach it here similarly.
 
 def on_message(body: dict, headers: dict):
     """

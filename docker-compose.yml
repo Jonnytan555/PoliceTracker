@@ -41,6 +41,9 @@ services:
     command: ["python", "-m", "app.scheduler_producer"]
     volumes:
       - .:/app
+    environment:
+      STOMP_HEARTBEAT_OUT_MS: "10000"
+      STOMP_HEARTBEAT_IN_MS: "10000"
 
   worker:
     build:
@@ -59,6 +62,8 @@ services:
       - .:/app
     environment:
       METRICS_PORT: "9000"
+      STOMP_HEARTBEAT_OUT_MS: "10000"
+      STOMP_HEARTBEAT_IN_MS: "10000"
     ports:
       - "9000:9000"
 

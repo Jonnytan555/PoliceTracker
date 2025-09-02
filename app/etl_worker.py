@@ -4,6 +4,7 @@ import os
 import logging
 import time
 
+from app.logging_setup import setup_logging
 from .config import settings
 from .db import get_engine, ensure_schema
 from .etl import upsert_bronze_and_silver
@@ -12,12 +13,19 @@ from .mq import MQClient
 from .job_events import Subject, JobEvent
 from .observers import ActiveMQReporter, EmailReporter, LogReporter
 
-# ----- Logging -----
-try:
-    from .logging_setup import setup_logging
-except ImportError:
-    from .logging_setup import setup_log as setup_logging
-setup_logging()
+logger = setup_logging(
+    app="police-tracker",
+    filename="logs/police-tracker.log",
+    use_stream=True,
+    stream_json=True,
+    alert_to="test@example.com",
+    alert_minimum_level="ERROR",
+)
+
+logger.info(
+    f"[worker] Using start_month={settings.start_month}, "
+    f"forces={settings.forces}, cron='{settings.cron_schedule}'"
+)
 
 # ----- Prometheus metrics -----
 from .metrics import (

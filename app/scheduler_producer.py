@@ -3,15 +3,26 @@ import os
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.logging_setup import setup_logging
 from .config import settings
 from .db import get_engine, ensure_schema
 from .etl import discover_months_for_forces, load_dim_force
 from .mq import MQClient
 
-from .logging_setup import setup_logging
-setup_logging()
-logging.info(f"[producer] Using start_month={settings.start_month}, forces={settings.forces}, cron='{settings.cron_schedule}'")
 
+logger = setup_logging(
+    app="police-tracker",
+    filename="logs/police-tracker.log",
+    use_stream=True,
+    stream_json=True,
+    alert_to="test@example.com",
+    alert_minimum_level="ERROR",
+)
+
+logger.info(
+    f"[producer] Using start_month={settings.start_month}, "
+    f"forces={settings.forces}, cron='{settings.cron_schedule}'"
+)
 
 MQ_HOST = os.getenv("MQ_HOST", "activemq")
 MQ_PORT = int(os.getenv("MQ_PORT", "61613"))

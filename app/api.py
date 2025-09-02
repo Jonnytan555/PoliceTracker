@@ -9,9 +9,17 @@ from .logging_setup import setup_logging
 from .db import get_engine
 from .config import settings
 
-setup_logging()
 
-API_KEY = os.getenv("API_KEY")  # set in .env for prod
+logger = setup_logging(
+    app="police-tracker",
+    filename="logs/police-tracker.log",
+    use_stream=True,
+    stream_json=True,
+    alert_to="test@example.com",
+    alert_minimum_level="ERROR",
+)
+
+API_KEY = os.getenv("API_KEY")
 ALLOWED_ORIGINS = os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")
 
 app = FastAPI(title="Stop & Search API", version="1.1")
